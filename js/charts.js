@@ -72,6 +72,38 @@ App.Charts = (function () {
     node.addEventListener("blur", hideTooltip);
   }
 
+  /* Rough advance-width estimate, only used for layout decisions that must be
+     made before the SVG is in the DOM (it errs wide, so it never under-reserves). */
+  function textWidth(text, fontSize) {
+    return String(text).length * fontSize * 0.55;
+  }
+
+  /* A label carries its full text in a <title> and a separate text node we can
+     shorten. Truncation itself waits until the node is measurable. */
+  function labelText(attrs, full) {
+    const node = el("text", attrs);
+    const textNode = document.createTextNode(full);
+    node.appendChild(textNode);
+    const title = el("title");
+    title.textContent = full;
+    node.appendChild(title);
+    return { node, textNode, full };
+  }
+
+  function applyFits(fits) {
+    fits.forEach((fit) => {
+      const node = fit.entry.node;
+      if (typeof node.getComputedTextLength !== "function") return;
+      if (node.getComputedTextLength() <= fit.maxWidth) return;
+      let text = fit.entry.full;
+      while (text.length > 1) {
+        text = text.slice(0, -1);
+        fit.entry.textNode.nodeValue = text.replace(/\s+$/, "") + "…";
+        if (node.getComputedTextLength() <= fit.maxWidth) return;
+      }
+    });
+  }
+
   function categoryLabel(categories, id) {
     if (id === M.UNPLANNED_ID) return "Nicht verplant";
     const c = categories.find((c) => c.id === id);
@@ -100,10 +132,25 @@ App.Charts = (function () {
     container.innerHTML = "";
     const mode = currentMode();
     const width = container.clientWidth || 640;
+    const narrow = width < 480;
     const rowH = 46;
-    const topPad = 28;
-    const leftPad = 150;
-    const rightPad = 56;
+    const leftPad = narrow ? 118 : 150;
+    const rightPad = narrow ? 46 : 56;
+    const labelSize = narrow ? 11 : 13;
+    const baseColor = mode === "dark" ? "#898781" : "#898781";
+    const otherColor = mode === "dark" ? "#3987e5" : "#2a78d6";
+
+    /* Lay the legend out from measured widths so a long scenario name wraps
+       to a second line instead of running off the right edge. */
+    const legendItems = [
+      { label: opts.baseLabel, color: baseColor },
+      { label: opts.otherLabel, color: otherColor },
+    ];
+    const legendAvail = width - leftPad;
+    const itemWidths = legendItems.map((it) => 18 + textWidth(it.label, 12) + 16);
+    const legendStacked = itemWidths[0] + itemWidths[1] > legendAvail;
+    const legendRows = legendStacked ? 2 : 1;
+    const topPad = 14 + legendRows * 18;
     const height = topPad + rows.length * rowH + 16;
     const maxVal = Math.max(1, ...rows.map((r) => Math.max(r.base, r.other)));
     const scaleW = width - leftPad - rightPad;
@@ -116,33 +163,39 @@ App.Charts = (function () {
       "aria-label": "Vergleich der Stunden pro Kategorie zwischen Basis und Szenario",
     });
 
-    const legend = el("g", { transform: `translate(${leftPad}, 14)` });
-    const baseColor = mode === "dark" ? "#898781" : "#898781";
-    const otherColor = mode === "dark" ? "#3987e5" : "#2a78d6";
-    [
-      { label: opts.baseLabel, color: baseColor, x: 0 },
-      { label: opts.otherLabel, color: otherColor, x: 140 },
-    ].forEach((item) => {
-      const g = el("g", { transform: `translate(${item.x}, 0)` });
+    const fits = [];
+    const legend = el("g", { transform: `translate(${leftPad}, 8)` });
+    let cursorX = 0;
+    legendItems.forEach((item, i) => {
+      const x = legendStacked ? 0 : cursorX;
+      const y = legendStacked ? i * 18 : 0;
+      cursorX += itemWidths[i];
+      const g = el("g", { transform: `translate(${x}, ${y})` });
       g.appendChild(el("rect", { width: 12, height: 12, rx: 3, fill: item.color }));
-      const t = el("text", { x: 18, y: 10, fill: ink(mode, "secondary"), "font-size": 12 });
-      t.textContent = item.label;
-      g.appendChild(t);
+      const entry = labelText(
+        { x: 18, y: 10, fill: ink(mode, "secondary"), "font-size": 12 },
+        item.label
+      );
+      fits.push({ entry, maxWidth: legendAvail - 18 - x });
+      g.appendChild(entry.node);
       legend.appendChild(g);
     });
     svg.appendChild(legend);
 
     rows.forEach((row, i) => {
       const y = topPad + i * rowH;
-      const label = el("text", {
-        x: leftPad - 12,
-        y: y + rowH / 2 - 6,
-        "text-anchor": "end",
-        fill: ink(mode, "primary"),
-        "font-size": 13,
-      });
-      label.textContent = categoryLabel(categories, row.id);
-      svg.appendChild(label);
+      const entry = labelText(
+        {
+          x: leftPad - 12,
+          y: y + rowH / 2 - 6,
+          "text-anchor": "end",
+          fill: ink(mode, "primary"),
+          "font-size": labelSize,
+        },
+        categoryLabel(categories, row.id)
+      );
+      fits.push({ entry, maxWidth: leftPad - 16 });
+      svg.appendChild(entry.node);
 
       const barPairs = [
         { val: row.base, color: baseColor, dy: -13, name: opts.baseLabel },
@@ -179,22 +232,26 @@ App.Charts = (function () {
     });
 
     container.appendChild(svg);
+    applyFits(fits);
   }
 
   function renderDeltaChart(container, rows, categories) {
     container.innerHTML = "";
     const mode = currentMode();
     const width = container.clientWidth || 640;
+    const narrow = width < 480;
     const rowH = 40;
     const topPad = 10;
-    const leftPad = 150;
-    const rightPad = 70;
+    const leftPad = narrow ? 118 : 150;
+    const rightPad = narrow ? 56 : 70;
+    const labelSize = narrow ? 11 : 13;
     const height = topPad + rows.length * rowH + 10;
     const maxAbs = Math.max(1, ...rows.map((r) => Math.abs(r.delta)));
     const scaleW = (width - leftPad - rightPad) / 2;
     const labelGutter = 50;
     const barScaleW = Math.max(20, scaleW - labelGutter);
     const zeroX = leftPad + scaleW;
+    const fits = [];
 
     const svg = el("svg", {
       width: "100%",
@@ -217,15 +274,18 @@ App.Charts = (function () {
 
     rows.forEach((row, i) => {
       const y = topPad + i * rowH;
-      const label = el("text", {
-        x: leftPad - 12,
-        y: y + rowH / 2 + 4,
-        "text-anchor": "end",
-        fill: ink(mode, "primary"),
-        "font-size": 13,
-      });
-      label.textContent = categoryLabel(categories, row.id);
-      svg.appendChild(label);
+      const entry = labelText(
+        {
+          x: leftPad - 12,
+          y: y + rowH / 2 + 4,
+          "text-anchor": "end",
+          fill: ink(mode, "primary"),
+          "font-size": labelSize,
+        },
+        categoryLabel(categories, row.id)
+      );
+      fits.push({ entry, maxWidth: leftPad - 16 });
+      svg.appendChild(entry.node);
 
       const w = Math.max(2, (Math.abs(row.delta) / maxAbs) * barScaleW);
       const gain = row.delta >= 0;
@@ -261,6 +321,7 @@ App.Charts = (function () {
     });
 
     container.appendChild(svg);
+    applyFits(fits);
   }
 
   function renderProjectionChart(container, points, opts) {
