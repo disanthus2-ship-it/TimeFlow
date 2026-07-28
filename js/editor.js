@@ -112,6 +112,16 @@ App.Editor = (function () {
     if (durationH >= 0.75) {
       div.innerHTML = `<span class="week-block__label">${block.label || (cat ? cat.name : "")}</span><span class="week-block__time">${M.minutesToTime(block.start)}–${M.minutesToTime(block.end)}</span>`;
     }
+
+    const topHandle = document.createElement("div");
+    topHandle.className = "week-block__handle week-block__handle--top";
+    const bottomHandle = document.createElement("div");
+    bottomHandle.className = "week-block__handle week-block__handle--bottom";
+    div.appendChild(topHandle);
+    div.appendChild(bottomHandle);
+
+    let dragMoved = false;
+
     const open = (evt) => {
       evt.stopPropagation();
       openBlockModal(categories, block, (result, remove) => {
@@ -127,7 +137,17 @@ App.Editor = (function () {
         onChange();
       });
     };
-    div.addEventListener("click", open);
+
+    attachMoveHandlers(div, block, day, scenario, onChange, (moved) => {
+      dragMoved = moved;
+    });
+    attachResizeHandlers(topHandle, block, day, scenario, onChange, "top");
+    attachResizeHandlers(bottomHandle, block, day, scenario, onChange, "bottom");
+
+    div.addEventListener("click", (evt) => {
+      if (dragMoved) return;
+      open(evt);
+    });
     div.addEventListener("keydown", (evt) => {
       if (evt.key === "Enter" || evt.key === " ") {
         evt.preventDefault();
@@ -135,6 +155,120 @@ App.Editor = (function () {
       }
     });
     return div;
+  }
+
+  function attachMoveHandlers(div, block, day, scenario, onChange, onMovedChange) {
+    let drag = null;
+
+    div.addEventListener("pointerdown", (evt) => {
+      if (evt.target.closest(".week-block__handle")) return;
+      evt.stopPropagation();
+      drag = {
+        startClientX: evt.clientX,
+        startClientY: evt.clientY,
+        origStart: block.start,
+        duration: block.end - block.start,
+        currentDayId: day.id,
+        moved: false,
+        previewStart: block.start,
+        previewEnd: block.end,
+      };
+      div.setPointerCapture(evt.pointerId);
+    });
+
+    div.addEventListener("pointermove", (evt) => {
+      if (!drag) return;
+      const dx = evt.clientX - drag.startClientX;
+      const dy = evt.clientY - drag.startClientY;
+      if (!drag.moved) {
+        if (Math.abs(dx) + Math.abs(dy) < 4) return;
+        drag.moved = true;
+        onMovedChange(true);
+        div.classList.add("week-block--dragging");
+      }
+
+      const deltaMin = snap((dy / HOUR_PX) * 60);
+      const maxStart = M.MINUTES_PER_DAY - drag.duration;
+      const newStart = Math.max(0, Math.min(maxStart, drag.origStart + deltaMin));
+      const newEnd = newStart + drag.duration;
+      drag.previewStart = newStart;
+      drag.previewEnd = newEnd;
+
+      const under = document.elementFromPoint(evt.clientX, evt.clientY);
+      const col = under && under.closest(".week-editor__day");
+      if (col && col.dataset.day !== drag.currentDayId) {
+        col.appendChild(div);
+        drag.currentDayId = col.dataset.day;
+      }
+
+      div.style.top = (newStart / 60) * HOUR_PX + "px";
+      const timeEl = div.querySelector(".week-block__time");
+      if (timeEl) {
+        timeEl.textContent = `${M.minutesToTime(newStart)}–${M.minutesToTime(newEnd)}`;
+      }
+    });
+
+    div.addEventListener("pointerup", () => {
+      if (!drag) return;
+      const wasMoved = drag.moved;
+      div.classList.remove("week-block--dragging");
+      if (wasMoved) {
+        const targetDayId = drag.currentDayId;
+        block.start = drag.previewStart;
+        block.end = drag.previewEnd;
+        if (targetDayId !== day.id) {
+          const idx = scenario.days[day.id].findIndex((b) => b.id === block.id);
+          if (idx >= 0) scenario.days[day.id].splice(idx, 1);
+          scenario.days[targetDayId].push(block);
+          M.sortDay(scenario.days[targetDayId]);
+        } else {
+          M.sortDay(scenario.days[day.id]);
+        }
+        onChange();
+      }
+      drag = null;
+      setTimeout(() => onMovedChange(false), 0);
+    });
+  }
+
+  function attachResizeHandlers(handle, block, day, scenario, onChange, edge) {
+    let drag = null;
+
+    handle.addEventListener("pointerdown", (evt) => {
+      evt.stopPropagation();
+      drag = { startClientY: evt.clientY, origStart: block.start, origEnd: block.end };
+      handle.setPointerCapture(evt.pointerId);
+    });
+
+    handle.addEventListener("pointermove", (evt) => {
+      if (!drag) return;
+      evt.stopPropagation();
+      const dy = evt.clientY - drag.startClientY;
+      const deltaMin = snap((dy / HOUR_PX) * 60);
+      if (edge === "top") {
+        block.start = Math.min(clampMinutes(drag.origStart + deltaMin), drag.origEnd - SNAP_MIN);
+      } else {
+        block.end = Math.max(clampMinutes(drag.origEnd + deltaMin), drag.origStart + SNAP_MIN);
+      }
+
+      const parentBlock = handle.parentElement;
+      parentBlock.style.top = (block.start / 60) * HOUR_PX + "px";
+      parentBlock.style.height = Math.max(6, ((block.end - block.start) / 60) * HOUR_PX) + "px";
+      const timeEl = parentBlock.querySelector(".week-block__time");
+      if (timeEl) {
+        timeEl.textContent = `${M.minutesToTime(block.start)}–${M.minutesToTime(block.end)}`;
+      }
+    });
+
+    handle.addEventListener("pointerup", (evt) => {
+      if (!drag) return;
+      evt.stopPropagation();
+      drag = null;
+      M.sortDay(scenario.days[day.id]);
+      onChange();
+    });
+
+    handle.addEventListener("click", (evt) => evt.stopPropagation());
   }
 
   function attachCreateHandlers(col, day, scenario, categories, onChange) {

@@ -268,8 +268,44 @@ button {
   color: #fff;
   font-size: 11px;
   overflow: hidden;
-  cursor: pointer;
+  cursor: grab;
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.15);
+  touch-action: none;
+  user-select: none;
+}
+
+.week-block--dragging {
+  cursor: grabbing;
+  z-index: 5;
+  opacity: 0.9;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+}
+
+.week-block__handle {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 9px;
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.week-block__handle--top {
+  top: -3px;
+}
+
+.week-block__handle--bottom {
+  bottom: -3px;
+}
+
+.week-block__handle::after {
+  content: "";
+  display: block;
+  width: 22px;
+  height: 3px;
+  margin: 3px auto 0;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.65);
 }
 
 .week-block__label {
