@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TimeFlow – Persönliche Zeitplanung</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="app-header__brand">
+      <span class="app-header__logo">⏳</span>
+      <span class="app-header__title">TimeFlow</span>
+    </div>
+    <div class="app-header__scenario" id="active-scenario-select"></div>
+    <button id="theme-toggle" class="btn-secondary theme-toggle" type="button">🌓 System</button>
+  </header>
+
+  <nav class="tab-bar">
+    <button class="tab-btn tab-btn--active" data-tab="plan">Wochenplan</button>
+    <button class="tab-btn" data-tab="scenarios">Szenarien</button>
+    <button class="tab-btn" data-tab="analysis">Analyse &amp; Simulation</button>
+    <button class="tab-btn" data-tab="settings">Einstellungen</button>
+  </nav>
+
+  <main class="app-main">
+    <section id="panel-plan" class="panel panel--active"></section>
+    <section id="panel-scenarios" class="panel"></section>
+    <section id="panel-analysis" class="panel"></section>
+    <section id="panel-settings" class="panel"></section>
+  </main>
+
+  <footer class="app-footer">
+    Alle Daten bleiben lokal in diesem Browser (localStorage) – keine Anmeldung, kein Server.
+  </footer>
+
+  <script src="js/model.js"></script>
+  <script src="js/storage.js"></script>
+  <script src="js/charts.js"></script>
+  <script src="js/editor.js"></script>
+  <script src="js/scenarios.js"></script>
+  <script src="js/categories.js"></script>
+  <script src="js/analysis.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
