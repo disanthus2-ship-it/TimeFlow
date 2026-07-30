@@ -158,9 +158,9 @@ App.Editor = (function () {
       addBtn.setAttribute("aria-label", "Zeitblock in " + day.label + " hinzufügen");
       addBtn.textContent = "+";
       addBtn.addEventListener("click", () => {
-        openBlockModal(categories, { dayId: day.id }, (result) => {
+        openBlockModal(categories, { dayIds: [day.id] }, (result) => {
           if (!result) return;
-          addBlock(scenario, result);
+          addBlocks(scenario, result);
           onChange();
         });
       });
@@ -244,17 +244,30 @@ App.Editor = (function () {
     return nav;
   }
 
-  function addBlock(scenario, result) {
-    const dayId = result.dayId;
-    const block = {
+  function blockFrom(result) {
+    return {
       id: M.uid("blk"),
       catId: result.catId,
       label: result.label,
       start: result.start,
       end: result.end,
     };
-    scenario.days[dayId].push(block);
-    M.sortDay(scenario.days[dayId]);
+  }
+
+  /* One dialog can seed several days at once, so every creation path funnels
+     through here and reports how many blocks it actually made. */
+  function addBlocks(scenario, result) {
+    result.dayIds.forEach((dayId) => {
+      scenario.days[dayId].push(blockFrom(result));
+      M.sortDay(scenario.days[dayId]);
+    });
+    announceCreated(result.dayIds.length);
+  }
+
+  function announceCreated(count) {
+    if (count > 1) {
+      App.UI.toast(count + " Zeitblöcke angelegt.");
+    }
   }
 
   function renderBlock(block, day, scenario, categories, onChange) {
@@ -288,7 +301,7 @@ App.Editor = (function () {
       evt.stopPropagation();
       openBlockModal(
         categories,
-        Object.assign({ dayId: day.id }, block),
+        Object.assign({ dayIds: [day.id] }, block),
         (result, remove) => {
           if (remove) {
             removeBlock(scenario, day.id, block.id);
@@ -296,15 +309,29 @@ App.Editor = (function () {
             return;
           }
           if (!result) return;
-          if (result.dayId !== day.id) {
+
+          /* The edited block keeps its own day when that day is still
+             selected, otherwise it moves to the first one; any further day
+             gets a copy. */
+          const primary = result.dayIds.includes(day.id) ? day.id : result.dayIds[0];
+          if (primary !== day.id) {
             removeBlock(scenario, day.id, block.id);
-            scenario.days[result.dayId].push(block);
+            scenario.days[primary].push(block);
           }
           block.catId = result.catId;
           block.label = result.label;
           block.start = result.start;
           block.end = result.end;
-          M.sortDay(scenario.days[result.dayId]);
+          M.sortDay(scenario.days[primary]);
+
+          const copies = result.dayIds.filter((id) => id !== primary);
+          copies.forEach((dayId) => {
+            scenario.days[dayId].push(blockFrom(result));
+            M.sortDay(scenario.days[dayId]);
+          });
+          if (copies.length) {
+            App.UI.toast("Auf " + copies.length + " weiteren Tagen kopiert.");
+          }
           onChange();
         }
       );
@@ -452,10 +479,10 @@ App.Editor = (function () {
         const end = rawEnd - start < SNAP_MIN ? start + 60 : rawEnd;
         openBlockModal(
           categories,
-          { start, end: Math.min(end, M.MINUTES_PER_DAY), dayId: day.id },
+          { start, end: Math.min(end, M.MINUTES_PER_DAY), dayIds: [day.id] },
           (result) => {
             if (!result) return;
-            addBlock(scenario, result);
+            addBlocks(scenario, result);
             onChange();
           }
         );
@@ -470,23 +497,81 @@ App.Editor = (function () {
     ctx.preview.style.height = Math.max(4, ((end - start) / 60) * HOUR_PX) + "px";
   }
 
+  /* Multi-select day picker: real checkboxes behind chip styling, so keyboard
+     and screen-reader behaviour comes for free. */
+  function buildDayPicker(selectedIds, isEdit) {
+    const field = document.createElement("fieldset");
+    field.className = "field field--days";
+    const legend = document.createElement("legend");
+    legend.textContent = "Tage";
+    field.appendChild(legend);
+
+    const picker = document.createElement("div");
+    picker.className = "day-picker";
+    const boxes = {};
+
+    M.DAYS.forEach((d) => {
+      const toggle = document.createElement("label");
+      toggle.className = "day-toggle";
+      toggle.title = d.label;
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.value = d.id;
+      cb.checked = selectedIds.indexOf(d.id) >= 0;
+      const text = document.createElement("span");
+      text.textContent = d.short;
+      toggle.appendChild(cb);
+      toggle.appendChild(text);
+      const sync = () => toggle.classList.toggle("day-toggle--on", cb.checked);
+      cb.addEventListener("change", sync);
+      sync();
+      picker.appendChild(toggle);
+      boxes[d.id] = { input: cb, sync };
+    });
+    field.appendChild(picker);
+
+    const allIds = M.DAYS.map((d) => d.id);
+    const presets = document.createElement("div");
+    presets.className = "day-presets";
+    [
+      { label: "Werktage", ids: allIds.slice(0, 5) },
+      { label: "Wochenende", ids: allIds.slice(5) },
+      { label: "Alle", ids: allIds },
+    ].forEach((preset) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn-secondary btn-small";
+      btn.textContent = preset.label;
+      btn.addEventListener("click", () => {
+        allIds.forEach((id) => {
+          boxes[id].input.checked = preset.ids.indexOf(id) >= 0;
+          boxes[id].sync();
+        });
+      });
+      presets.appendChild(btn);
+    });
+    field.appendChild(presets);
+
+    if (isEdit) {
+      const hint = document.createElement("p");
+      hint.className = "field-hint";
+      hint.textContent =
+        "Zusätzlich ausgewählte Tage erhalten eine Kopie dieses Blocks.";
+      field.appendChild(hint);
+    }
+
+    return {
+      node: field,
+      getSelected: () => allIds.filter((id) => boxes[id].input.checked),
+    };
+  }
+
   function openBlockModal(categories, block, callback) {
     const isEdit = !!(block && block.id);
     const body = document.createElement("div");
     body.className = "modal-form";
 
-    const dayField = document.createElement("label");
-    dayField.className = "field";
-    dayField.innerHTML = "<span>Tag</span>";
-    const daySelect = document.createElement("select");
-    M.DAYS.forEach((d) => {
-      const opt = document.createElement("option");
-      opt.value = d.id;
-      opt.textContent = d.label;
-      if (block && block.dayId === d.id) opt.selected = true;
-      daySelect.appendChild(opt);
-    });
-    dayField.appendChild(daySelect);
+    const dayPicker = buildDayPicker((block && block.dayIds) || [M.DAYS[0].id], isEdit);
 
     const catField = document.createElement("label");
     catField.className = "field";
@@ -533,7 +618,7 @@ App.Editor = (function () {
     timeRow.appendChild(startField);
     timeRow.appendChild(endField);
 
-    body.appendChild(dayField);
+    body.appendChild(dayPicker.node);
     body.appendChild(catField);
     body.appendChild(labelField);
     body.appendChild(timeRow);
@@ -548,6 +633,12 @@ App.Editor = (function () {
         label: isEdit ? "Speichern" : "Hinzufügen",
         primary: true,
         onClick: (close) => {
+          const dayIds = dayPicker.getSelected();
+          if (!dayIds.length) {
+            errorMsg.textContent = "Wähle mindestens einen Tag aus.";
+            errorMsg.hidden = false;
+            return;
+          }
           let start = M.timeToMinutes(startInput.value);
           let end = M.timeToMinutes(endInput.value);
           if (end <= start) end = M.MINUTES_PER_DAY;
@@ -557,7 +648,7 @@ App.Editor = (function () {
             return;
           }
           callback({
-            dayId: daySelect.value,
+            dayIds,
             catId: catSelect.value,
             label: labelInput.value.trim(),
             start,
