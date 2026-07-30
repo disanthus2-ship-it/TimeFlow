@@ -566,6 +566,100 @@ App.Editor = (function () {
     };
   }
 
+  /* Category chooser that can also mint a new category inline, so a missing
+     category does not force a detour through the settings tab. */
+  function buildCategoryPicker(categories, selectedId) {
+    const NEW_VALUE = "__new__";
+    const mode = App.Charts.currentMode();
+
+    const field = document.createElement("div");
+    field.className = "field";
+    const legend = document.createElement("span");
+    legend.textContent = "Kategorie";
+    field.appendChild(legend);
+
+    const select = document.createElement("select");
+    categories.forEach((c) => {
+      const opt = document.createElement("option");
+      opt.value = c.id;
+      opt.textContent = c.name;
+      if (c.id === selectedId) opt.selected = true;
+      select.appendChild(opt);
+    });
+    const newOpt = document.createElement("option");
+    newOpt.value = NEW_VALUE;
+    newOpt.textContent = "+ Neue Kategorie …";
+    select.appendChild(newOpt);
+    if (!categories.length) newOpt.selected = true;
+    field.appendChild(select);
+
+    const creator = document.createElement("div");
+    creator.className = "new-category";
+    const swatch = document.createElement("span");
+    swatch.className = "category-swatch";
+    swatch.style.background = M.slotColor(M.nextColorIndex(categories), mode);
+    const nameInput = document.createElement("input");
+    nameInput.type = "text";
+    nameInput.placeholder = "Name der neuen Kategorie";
+    nameInput.setAttribute("aria-label", "Name der neuen Kategorie");
+    creator.appendChild(swatch);
+    creator.appendChild(nameInput);
+    field.appendChild(creator);
+
+    const nameListeners = [];
+    function currentName() {
+      if (select.value === NEW_VALUE) return nameInput.value.trim();
+      const cat = categories.find((c) => c.id === select.value);
+      return cat ? cat.name : "";
+    }
+    function notify() {
+      const name = currentName();
+      nameListeners.forEach((fn) => fn(name));
+    }
+
+    function syncMode() {
+      const creating = select.value === NEW_VALUE;
+      creator.hidden = !creating;
+      if (creating) nameInput.focus();
+      notify();
+    }
+    select.addEventListener("change", syncMode);
+    nameInput.addEventListener("input", notify);
+    creator.hidden = select.value !== NEW_VALUE;
+
+    return {
+      node: field,
+      onNameChange: (fn) => {
+        nameListeners.push(fn);
+        fn(currentName());
+      },
+      resolve: () => {
+        if (select.value !== NEW_VALUE) return { catId: select.value };
+        const name = nameInput.value.trim();
+        if (!name) {
+          nameInput.focus();
+          return { error: "Gib der neuen Kategorie einen Namen." };
+        }
+        const clash = categories.some(
+          (c) => c.name.toLowerCase() === name.toLowerCase()
+        );
+        if (clash) {
+          nameInput.focus();
+          return { error: `Die Kategorie "${name}" gibt es bereits.` };
+        }
+        const cat = {
+          id: M.uid("cat"),
+          name: name,
+          type: "custom",
+          colorIndex: M.nextColorIndex(categories),
+        };
+        categories.push(cat);
+        App.UI.toast(`Kategorie "${name}" angelegt.`);
+        return { catId: cat.id };
+      },
+    };
+  }
+
   function openBlockModal(categories, block, callback) {
     const isEdit = !!(block && block.id);
     const body = document.createElement("div");
@@ -573,27 +667,18 @@ App.Editor = (function () {
 
     const dayPicker = buildDayPicker((block && block.dayIds) || [M.DAYS[0].id], isEdit);
 
-    const catField = document.createElement("label");
-    catField.className = "field";
-    catField.innerHTML = `<span>Kategorie</span>`;
-    const catSelect = document.createElement("select");
-    categories.forEach((c) => {
-      const opt = document.createElement("option");
-      opt.value = c.id;
-      opt.textContent = c.name;
-      if (block && block.catId === c.id) opt.selected = true;
-      catSelect.appendChild(opt);
-    });
-    catField.appendChild(catSelect);
+    const catPicker = buildCategoryPicker(categories, block && block.catId);
 
     const labelField = document.createElement("label");
     labelField.className = "field";
     labelField.innerHTML = `<span>Bezeichnung (optional)</span>`;
     const labelInput = document.createElement("input");
     labelInput.type = "text";
-    labelInput.placeholder = categories[0] ? categories[0].name : "";
     labelInput.value = (block && block.label) || "";
     labelField.appendChild(labelInput);
+    catPicker.onNameChange((name) => {
+      labelInput.placeholder = name;
+    });
 
     const timeRow = document.createElement("div");
     timeRow.className = "field-row";
@@ -619,7 +704,7 @@ App.Editor = (function () {
     timeRow.appendChild(endField);
 
     body.appendChild(dayPicker.node);
-    body.appendChild(catField);
+    body.appendChild(catPicker.node);
     body.appendChild(labelField);
     body.appendChild(timeRow);
 
@@ -647,9 +732,19 @@ App.Editor = (function () {
             errorMsg.hidden = false;
             return;
           }
+
+          /* A category typed into this dialog is only created once the block
+             itself is saved, so cancelling leaves nothing behind. */
+          const resolved = catPicker.resolve();
+          if (resolved.error) {
+            errorMsg.textContent = resolved.error;
+            errorMsg.hidden = false;
+            return;
+          }
+
           callback({
             dayIds,
-            catId: catSelect.value,
+            catId: resolved.catId,
             label: labelInput.value.trim(),
             start,
             end,

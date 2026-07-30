@@ -555,6 +555,28 @@ body.is-dragging {
   margin-top: 8px;
 }
 
+.new-category {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* An explicit display would otherwise beat the [hidden] attribute. */
+.new-category[hidden] {
+  display: none;
+}
+
+.new-category input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-3);
+  color: var(--text-primary);
+}
+
 .btn-small {
   padding: 6px 10px;
   font-size: 12px;
